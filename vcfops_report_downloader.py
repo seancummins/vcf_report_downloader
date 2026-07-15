@@ -12,7 +12,7 @@ import urllib3
 def parse_arguments_and_config():
     """Parses CLI arguments and merges them with an optional config file."""
     parser = argparse.ArgumentParser(
-        description="Download VCF Operations reports generated in the last 24 hours."
+        description="Download recently generated VCF Operations reports."
     )
 
     parser.add_argument(
@@ -26,11 +26,16 @@ def parse_arguments_and_config():
         "--authsource",
         help="VCF Operations Authentication source (default is internal)",
     )
-    parser.add_argument("-o", "--outdir", help="Directory in which to save PDFs")
+    parser.add_argument("-o", "--outdir", help="Directory in which to save reports")
+    parser.add_argument("-f", "--format", choices=("pdf", "csv"), type=str.lower,
+                        help="Download format (default: pdf)")
+    parser.add_argument("-l", "--lookback-hours", type=float,
+                        help="Only download reports generated within this many hours (default: 24)")
     parser.add_argument(
         "-U",
         "--unsafe",
         action="store_true",
+        default=None,
         help="Skip SSL verification (not recommended in production)",
     )
 
@@ -64,6 +69,18 @@ def parse_arguments_and_config():
             parser.error(f"Failed to parse config file: {e}")
 
     # 2. Merge values: CLI flags take absolute priority over config file defaults
+    try:
+        config_unsafe = config.getboolean("vcf-ops", "unsafe", fallback=False) if args.config else False
+        report_format = (args.format or config_values.get("format", "pdf")).lower()
+        if report_format not in ("pdf", "csv"):
+            raise ValueError("format must be either 'pdf' or 'csv'")
+        lookback_hours = (args.lookback_hours if args.lookback_hours is not None
+                          else float(config_values.get("lookback_hours", 24)))
+        if lookback_hours <= 0:
+            raise ValueError("lookback_hours must be greater than zero")
+    except (ValueError, configparser.Error) as e:
+        parser.error(f"Invalid configuration: {e}")
+
     final_params = {
         "host": args.host or config_values.get("host"),
         "user": args.user or config_values.get("user"),
@@ -72,7 +89,9 @@ def parse_arguments_and_config():
         or config_values.get("authsource")
         or "internal",
         "outdir": args.outdir or config_values.get("outdir"),
-        "unsafe": args.unsafe,
+        "unsafe": args.unsafe if args.unsafe is not None else config_unsafe,
+        "format": report_format,
+        "lookback_hours": lookback_hours,
     }
 
     # 3. Validation: Ensure all essential parameters are populated
@@ -146,12 +165,12 @@ def get_report_definitions(host, token, verify_ssl):
         return {}
 
 
-def download_recent_reports(host, token, outdir, verify_ssl):
-    """Polls report instances and downloads those finished in the last 24 hours."""
+def download_recent_reports(host, token, outdir, verify_ssl, report_format="pdf", lookback_hours=24):
+    """Downloads report instances completed within the configured lookback window."""
     template_map = get_report_definitions(host, token, verify_ssl)
 
     # Clean, modern timezone-aware UTC datetime tracking
-    cutoff_time = datetime.now(timezone.utc) - timedelta(hours=24)
+    cutoff_time = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
 
     url = f"https://{host}/suite-api/api/reports"
     headers = {
@@ -170,7 +189,7 @@ def download_recent_reports(host, token, outdir, verify_ssl):
     download_count = 0
 
     print(
-        f"[*] Found {len(all_reports)} total completed reports. Filtering for the last 24 hours..."
+        f"[*] Found {len(all_reports)} total completed reports. Filtering for the last {lookback_hours:g} hours..."
     )
 
     for report in all_reports:
@@ -207,7 +226,7 @@ def download_recent_reports(host, token, outdir, verify_ssl):
 
                 # Generate a clean timestamp suffix (e.g., 2026-07-08_223901)
                 timestamp_suffix = report_time.strftime("%Y-%m-%d_%H%M%S")
-                filename = f"{safe_name}_{timestamp_suffix}.pdf"
+                filename = f"{safe_name}_{timestamp_suffix}.{report_format}"
                 full_output_path = os.path.join(outdir, filename)
 
                 print(
@@ -219,12 +238,14 @@ def download_recent_reports(host, token, outdir, verify_ssl):
                 )
                 download_headers = {
                     "Authorization": f"vRealizeOpsToken {token}",
-                    "Accept": "application/pdf",
+                    "Accept": "application/pdf" if report_format == "pdf" else "text/csv",
                 }
+                download_params = {"format": "CSV"} if report_format == "csv" else None
 
                 with requests.get(
                     download_url,
                     headers=download_headers,
+                    params=download_params,
                     stream=True,
                     verify=verify_ssl,
                 ) as r:
@@ -271,6 +292,8 @@ if __name__ == "__main__":
             token=api_token,
             outdir=params["outdir"],
             verify_ssl=verify_ssl,
+            report_format=params["format"],
+            lookback_hours=params["lookback_hours"],
         )
 
     except Exception as e:

@@ -1,6 +1,6 @@
 # VCF Operations Report Downloader
 
-A standalone Python script to download completed PDF reports from **VCF Operations** (formerly VMware Aria Operations / vROps) generated within the last 24 hours.
+A standalone Python script to download recently completed PDF or CSV reports from **VCF Operations** (formerly VMware Aria Operations / vROps).
 
 Report generation can be scheduled normally via the VCF Operations UI, and then this script can be scheduled to download the reports afterwards.
 
@@ -9,7 +9,9 @@ Report generation can be scheduled normally via the VCF Operations UI, and then 
 
 * **Dual-Configuration Input:** Provide credentials via standard command-line interface (CLI) arguments or abstract them safely into an external configuration file.
 * **Security Verification:** Built-in POSIX permission validation flags security risks if your configuration file is exposed to group or world permissions.
-* **Chronological Filenames:** Automatically matches internal UUID execution instances to human-readable report definition templates, outputting files using an asset-safe `[Report_Name]_[YYYY-MM-DD_HHMMSS].pdf` pattern.
+* **PDF or CSV Downloads:** Select the report format through the CLI or configuration file; PDF remains the default.
+* **Configurable Lookback:** Download reports completed within a configurable number of hours (24 by default).
+* **Chronological Filenames:** Automatically matches internal UUID execution instances to human-readable report definition templates, outputting files using an asset-safe `[Report_Name]_[YYYY-MM-DD_HHMMSS].[pdf|csv]` pattern.
 * **Efficient Lookup Cache:** Pre-fetches report definitions in a single call to build a lightweight in-memory lookup table, avoiding API bloat and reducing network round-trips.
 * **Future-Proof Time Handling:** Leverages explicit, timezone-aware UTC datetime tracking compliant with Python 3.12+ specifications.
 
@@ -38,6 +40,9 @@ user = automation_svc
 password = YourSecurePasswordHere
 authsource = internal
 outdir = /mnt/nfs_reports_share
+format = pdf
+unsafe = false
+lookback_hours = 24
 
 ```
 
@@ -67,10 +72,14 @@ python vcf_report_downloader.py [options]
 | `-u` | `--user` | VCF Operations automation service account user. | None |
 | `-p` | `--password` | VCF Operations account password. | None |
 | `-a` | `--authsource` | Identity provider engine name for authentication. | `internal` |
-| `-o` | `--outdir` | Direct destination folder path where PDFs will be stored. | None |
+| `-o` | `--outdir` | Direct destination folder path where reports will be stored. | None |
+| `-f` | `--format` | Download format: `pdf` or `csv`. | `pdf` |
+| `-l` | `--lookback-hours` | Include reports generated within this many hours. | `24` |
 | `-U` | `--unsafe` | Skips SSL certificate validation (Lab/Self-Signed friendly). | `False` |
 
 > **Note:** CLI flags will always take absolute precedence over parameters defined inside an attached configuration file.
+
+The INI `unsafe` option accepts standard boolean values such as `true`/`false`, `yes`/`no`, and `1`/`0`. CSV downloads use the API's `format=CSV` query parameter and `Accept: text/csv` header.
 
 
 ## Examples
@@ -100,6 +109,13 @@ Load baseline environment configurations from the INI file, but manually redirec
 ```bash
 python vcf_report_downloader.py -c /etc/vcf_ops.conf -o /tmp/temporary_report_dump -U
 
+```
+
+
+### 4. Download CSV Reports from the Last 72 Hours
+
+```bash
+python vcf_report_downloader.py -c /etc/vcf_ops.conf --format csv --lookback-hours 72
 ```
 
 
